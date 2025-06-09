@@ -17,7 +17,7 @@ import threading
 import tkinter as tk
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, Optional
@@ -729,6 +729,35 @@ class MainScreen(ctk.CTkFrame):
         )
         self.lines_label.pack(side="left", anchor="center")
         self.lines_slider.configure(command=self._update_lines_label)
+
+        # Slider for filtering by last modified date (years)
+        ctk.CTkLabel(
+            button_frame,
+            text="Modified Range (Years):",
+            font=(FONT_FAMILY, 11)
+        ).pack(side="left", padx=(20, 5), anchor="center")
+
+        self.modified_slider = ctk.CTkSlider(
+            button_frame,
+            from_=1,
+            to=10,
+            number_of_steps=9,
+            width=100
+        )
+        self.modified_slider.set(6)
+        self.modified_slider.pack(side="left", padx=(0, 10), anchor="center")
+
+        self.modified_label = ctk.CTkLabel(
+            button_frame,
+            text=f"{int(self.modified_slider.get())}",
+            font=(FONT_FAMILY, 11)
+        )
+        self.modified_label.pack(side="left", anchor="center")
+        self.modified_slider.configure(command=self._update_modified_label)
+
+        # Hide modified range controls by default
+        self.modified_slider.pack_forget()
+        self.modified_label.pack_forget()
         
         # Add dropdown for classification mode
         self.mode_var = tk.StringVar(value="Classification")
@@ -739,7 +768,11 @@ class MainScreen(ctk.CTkFrame):
             font=(FONT_FAMILY, 11),
             width=150
         )
+        mode_dropdown.configure(command=self._update_mode_ui)
         mode_dropdown.grid(row=0, column=1, sticky="e", padx=(0, 20))
+
+        # Initialize visibility based on default mode
+        self._update_mode_ui(self.mode_var.get())
 
     def _update_lines_label(self, value):
         """Update the lines-per-file label when slider value changes.
@@ -748,6 +781,19 @@ class MainScreen(ctk.CTkFrame):
             value: New slider value
         """
         self.lines_label.configure(text=f"{int(float(value))}")
+
+    def _update_modified_label(self, value):
+        """Update the modified-years label when slider changes."""
+        self.modified_label.configure(text=f"{int(float(value))}")
+
+    def _update_mode_ui(self, choice):
+        """Show or hide modified range controls based on mode."""
+        if choice == "Last Modified":
+            self.modified_slider.pack(side="left", padx=(0, 10), anchor="center")
+            self.modified_label.pack(side="left", anchor="center")
+        else:
+            self.modified_slider.pack_forget()
+            self.modified_label.pack_forget()
         
     def _setup_results_table(self, parent):
         """Setup the results table with headers and data display.
@@ -931,7 +977,25 @@ class MainScreen(ctk.CTkFrame):
         """
         try:
             print(f"DEBUG: _process_file called for: {file_path}")
-            
+
+            mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+            if (
+                self._run_mode == "Last Modified"
+                and mtime < datetime.now() - timedelta(days=6 * 365)
+            ):
+                size_kb = round(file_path.stat().st_size / 1024, 2)
+                return {
+                    'FileName': file_path.name,
+                    'Extension': file_path.suffix,
+                    'FullPath': str(file_path),
+                    'LastModified': mtime.isoformat(),
+                    'SizeKB': size_kb,
+                    'ModelDetermination': 'DESTROY',
+                    'ConfidenceScore': 100,
+                    'ContextualInsights': 'Older than 6 years - automatic destroy',
+                    'ProcessingTimeMs': 0
+                }
+
             # Run the blocking file processing in a thread pool
             loop = asyncio.get_event_loop()
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -1233,8 +1297,12 @@ object adhering to the defined schema.
         toplevel.bind('<Control-o>', lambda e: self._browse_folder())
         toplevel.bind('<Control-r>', lambda e: self._toggle_classification())
 
-    async def classify_files(self):
-        """Classify files asynchronously with real-time updates."""
+    async def classify_files(self, years_threshold=None):
+        """Classify files asynchronously with real-time updates.
+
+        Args:
+            years_threshold: Optional year filter for Last Modified mode.
+        """
         processed_count = 0
         total_files_estimate = 0
         
@@ -1256,7 +1324,7 @@ object adhering to the defined schema.
             
             print("DEBUG: Starting file enumeration")
             files_enumerated = 0
-            async for file in self.enumerate_files(folder):
+            async for file in self.enumerate_files(folder, years_threshold):
                 if not self.processing:  # Check if stopped
                     print("DEBUG: Processing stopped during enumeration")
                     return
@@ -1422,17 +1490,22 @@ object adhering to the defined schema.
                 self._update_action_buttons_visibility()
             self.after(0, final_ui_update)
 
-    async def enumerate_files(self, folder):
-        """Enumerate files in folder with async yield and proper cancellation handling.
-        
+    async def enumerate_files(self, folder, years_threshold=None):
+        """Enumerate files in folder with optional last-modified filtering.
+
         Args:
             folder: Path object to enumerate
-            
+            years_threshold: Only yield files modified on or before this many
+                years ago. ``None`` disables filtering.
+
         Yields:
             File paths found in the folder
         """
         try:
             print(f"DEBUG: Starting file enumeration in folder: {folder}")
+            cutoff = None
+            if years_threshold is not None:
+                cutoff = datetime.now() - timedelta(days=int(years_threshold) * 365)
             file_count = 0
             # Use pathlib.rglob which is more efficient
             for file in folder.rglob('*'):
@@ -1443,11 +1516,16 @@ object adhering to the defined schema.
                     
                 # Only yield actual files (not directories)
                 if file.is_file():
-                    file_count += 1
-                    print(f"DEBUG: Yielding file #{file_count}: {file.name} (size: {file.stat().st_size} bytes)")
-                    yield file
-                    # Yield control to allow other coroutines to run
-                    await asyncio.sleep(0.001)
+                    mtime = datetime.fromtimestamp(file.stat().st_mtime)
+                    if cutoff is None or mtime <= cutoff:
+                        file_count += 1
+                        print(
+                            f"DEBUG: Yielding file #{file_count}: {file.name} "
+                            f"(size: {file.stat().st_size} bytes)"
+                        )
+                        yield file
+                        # Yield control to allow other coroutines to run
+                        await asyncio.sleep(0.001)
                     
         except asyncio.CancelledError:
             # Handle cancellation gracefully - this is expected
@@ -1493,7 +1571,8 @@ object adhering to the defined schema.
 
             # Create and start the classification task
             loop = asyncio.get_event_loop()
-            self._classification_task = loop.create_task(self.classify_files())
+            years_param = int(self.modified_slider.get()) if self._run_mode == "Last Modified" else None
+            self._classification_task = loop.create_task(self.classify_files(years_param))
             
             # Add callback to handle task completion
             def on_task_complete(task):
@@ -1564,7 +1643,8 @@ object adhering to the defined schema.
 
             # Create and start the classification task
             loop = asyncio.get_event_loop()
-            self._classification_task = loop.create_task(self.classify_files())
+            years_param = int(self.modified_slider.get()) if self._run_mode == "Last Modified" else None
+            self._classification_task = loop.create_task(self.classify_files(years_param))
             
             # Add callback to handle task completion
             def on_task_complete(task):
