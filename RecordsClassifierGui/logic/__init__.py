@@ -6,8 +6,12 @@ This package contains the core business logic modules:
 - file_scanner: File discovery and filtering logic
 """
 
-from RecordsClassifierGui.classification_engine_fixed import ClassificationEngine, ClassificationResult, process_file
-from RecordsClassifierGui.file_scanner import FileScanner, INCLUDE_EXT, EXCLUDE_EXT
+from .classification_engine_fixed import (
+    ClassificationEngine,
+    ClassificationResult,
+    process_file,
+)
+from .file_scanner import FileScanner, INCLUDE_EXT, EXCLUDE_EXT
 
 __all__ = [
     'ClassificationEngine',

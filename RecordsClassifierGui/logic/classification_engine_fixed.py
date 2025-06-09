@@ -17,6 +17,10 @@ from typing import Dict, Any, List, Set, Optional, Union
 from dataclasses import dataclass
 import logging
 from RecordsClassifierGui.core import model_output_validation
+import os
+
+# Force CPU mode unless user overrides
+os.environ.setdefault("OLLAMA_LLAMA_ACCELERATE", "false")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -51,13 +55,7 @@ class ClassificationResult:
     error_message: str = ""
 
 class LLMEngine:
-    """Simple heuristic-based LLM replacement.
-
-    This engine performs lightweight keyword matching to approximate
-    language model behaviour without requiring network access or large
-    dependencies. It is suitable for production use in restricted
-    environments where a full LLM cannot be deployed.
-    """
+    """LLM interaction layer with robust fallback and logging."""
     
     def __init__(self, timeout_seconds: int = 60):
         """Initialize the LLM engine.
@@ -68,10 +66,22 @@ class LLMEngine:
         self.timeout_seconds = timeout_seconds
         self.ollama_available = False
         self.ollama = None
-    
+        self._initialize_ollama()
+
     def _initialize_ollama(self) -> None:
-        """Initialize real LLM clients when available."""
-        logger.info("LLMEngine running in lightweight mode; no external service")
+        """Attempt to import and verify the Ollama service."""
+        try:
+            import ollama
+
+            # Test that the service is reachable
+            _ = ollama.list()
+            self.ollama = ollama
+            self.ollama_available = True
+            logger.info("Ollama service detected and available")
+        except Exception as exc:  # pragma: no cover - service missing
+            logger.warning("Ollama unavailable: %s", exc)
+            self.ollama_available = False
+            self.ollama = None
 
     def classify_with_llm(
         self,
@@ -80,50 +90,117 @@ class LLMEngine:
         content: str,
         temperature: float = 0.1,
     ) -> Dict[str, Any]:
-        """Classify content using WA Schedule 6 heuristics.
+        """Call the LLM and return validated output."""
 
-        The model analyzes the text while keyword matches contribute only to
-        the confidence score.
-        """
+        logger.debug("LLM prompt: %s", system_instructions)
+
+        if not self.ollama_available or not self.ollama:
+            logger.warning("LLM unavailable; falling back to heuristic mode")
+            return self._heuristic_classify(content)
+
+        generation_config = {
+            "temperature": max(0.0, min(1.0, temperature)),
+            "top_p": 0.9,
+            "top_k": 40,
+            "num_ctx": 8192,
+            "repeat_penalty": 1.2,
+            "system": system_instructions,
+        }
+
+        prompt = system_instructions
 
         try:
-            text = content.lower()
+            result_container = {"result": None, "error": None}
 
-            # Count keyword occurrences for each Schedule 6 class
-            keyword_counts = {
-                label: sum(text.count(kw) for kw in model_output_validation.SCHEDULE_6_KEYWORDS.get(label, []))
-                for label in model_output_validation.SCHEDULE_6_KEYWORDS
-            }
+            def llm_call() -> None:
+                try:
+                    response = self.ollama.chat(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        options=generation_config,
+                        stream=False,
+                    )
+                    result_container["result"] = response
+                except Exception as exc:
+                    result_container["error"] = exc
 
-            if keyword_counts:
-                best_label = max(keyword_counts, key=keyword_counts.get)
-                first_match = next(
-                    (kw for kw in model_output_validation.SCHEDULE_6_KEYWORDS[best_label] if kw in text),
-                    "",
-                )
-                # Map OFFICIAL schedule to KEEP determination
-                determination = "KEEP" if best_label == "OFFICIAL" else best_label
-                base_conf = 50 + min(keyword_counts[best_label] * 10, 40)
-                return {
-                    "modelDetermination": determination,
-                    "confidenceScore": base_conf,
-                    "contextualInsights": f"Matched keyword '{first_match}'" if first_match else "Schedule 6 heuristic",
-                }
+            thread = threading.Thread(target=llm_call, daemon=True)
+            thread.start()
+            thread.join(timeout=self.timeout_seconds)
 
-            snippet = text[:50]
+            if thread.is_alive():
+                raise TimeoutError(f"LLM call timed out after {self.timeout_seconds} seconds")
+
+            if result_container["error"]:
+                raise result_container["error"]
+
+            response = result_container["result"]
+            raw = (
+                response.get("message", {}).get("content", "")
+                if isinstance(response, dict)
+                else str(response)
+            )
+            logger.debug("LLM raw response: %s", raw)
+
+            json_match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
+            if not json_match:
+                raise ValueError(f"No valid JSON in response: {raw[:200]}")
+
+            result = json.loads(json_match.group(0))
+
+            if result.get("classification") not in {"TRANSITORY", "DESTROY", "ARCHIVE", "KEEP"}:
+                raise ValueError(f"Invalid classification: {result.get('classification')}")
+
+            conf = result.get("confidence")
+            if not isinstance(conf, (int, float)) or not (0 <= conf <= 1):
+                raise ValueError(f"Invalid confidence: {conf}")
+
+            rationale = result.get("rationale", "")
+            if not isinstance(rationale, str) or not rationale.strip():
+                raise ValueError("Rationale missing")
+
             return {
-                "modelDetermination": "TRANSITORY",
-                "confidenceScore": 50,
-                "contextualInsights": f"No Schedule 6 keywords found. Sample: '{snippet}'",
+                "modelDetermination": result["classification"],
+                "confidenceScore": int(conf * 100),
+                "contextualInsights": rationale,
             }
 
         except Exception as exc:  # pragma: no cover - unexpected failures
-            logger.error("Heuristic classification failed: %s", exc)
+            logger.error("LLM classification failed: %s", exc)
             return {
                 "modelDetermination": "ERROR",
                 "confidenceScore": 0,
-                "contextualInsights": f"Error: {exc}",
+                "contextualInsights": f"Classification error: {exc}",
             }
+
+    def _heuristic_classify(self, content: str) -> Dict[str, Any]:
+        """Minimal heuristic fallback used when LLM cannot be reached."""
+        text = content.lower()
+        keyword_counts = {
+            label: sum(text.count(kw) for kw in model_output_validation.SCHEDULE_6_KEYWORDS.get(label, []))
+            for label in model_output_validation.SCHEDULE_6_KEYWORDS
+        }
+
+        if keyword_counts:
+            best_label = max(keyword_counts, key=keyword_counts.get)
+            first_match = next(
+                (kw for kw in model_output_validation.SCHEDULE_6_KEYWORDS[best_label] if kw in text),
+                "",
+            )
+            determination = "KEEP" if best_label == "OFFICIAL" else best_label
+            base_conf = 50 + min(keyword_counts[best_label] * 10, 40)
+            return {
+                "modelDetermination": determination,
+                "confidenceScore": base_conf,
+                "contextualInsights": f"Matched keyword '{first_match}'" if first_match else "Heuristic fallback",
+            }
+
+        snippet = text[:50]
+        return {
+            "modelDetermination": "TRANSITORY",
+            "confidenceScore": 50,
+            "contextualInsights": f"No keywords found. Sample: '{snippet}'",
+        }
 class ClassificationEngine:
     """Main classification engine with hybrid scoring.
     
@@ -176,15 +253,26 @@ class ClassificationEngine:
         except Exception:
             return min(100, max(1, int(llm_score)))
     
-    def _read_file_content(self, file_path: Path, max_lines: int = 100) -> str:
-        """Safely read file content with proper error handling."""
+    def _read_file_content(self, file_path: Path, max_lines: int = 100, min_words: int = 300) -> str:
+        """Read at least `min_words` words from file, up to `max_lines` lines."""
+        words: List[str] = []
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = "".join([next(f, "") for _ in range(max_lines)])
-            return content
+                for _ in range(max_lines):
+                    line = f.readline()
+                    if not line:
+                        break
+                    words.extend(line.split())
+                    if len(words) >= min_words:
+                        break
+            if len(words) < min_words:
+                logger.warning(
+                    "Content under %d words for %s", min_words, file_path.name
+                )
+            return " ".join(words)
         except Exception as e:
-            logger.warning(f"Could not read file {file_path}: {e}")
-            return ''
+            logger.warning("Could not read file %s: %s", file_path, e)
+            return ""
     
     def classify_file(
         self,
@@ -252,7 +340,7 @@ class ClassificationEngine:
                 )
             
             # Read file content
-            content = self._read_file_content(file_path, max_lines)
+            content = self._read_file_content(file_path, max_lines, min_words=300)
             
             threshold = datetime.datetime.now() - datetime.timedelta(days=6 * 365)
 
@@ -300,12 +388,24 @@ class ClassificationEngine:
                     processing_time_ms=int(processing_time),
                 )
             
-            # Use LLM for classification
+            # Build prompt for the LLM per cleanup policy
+            prompt = (
+                "You are classifying digital records for cleanup based on this policy:\n"
+                "- TRANSITORY: brainstorming, notes, drafts, task tracking, reference, contact info.\n"
+                "- DESTROY: not needed + past retention.\n"
+                "- ARCHIVE: not needed, still within retention.\n"
+                "- KEEP: active or critical business use.\n\n"
+                f"File info:\n- Name: {file_path.name}\n- Type: {extension}\n- Last Modified: {mtime.isoformat()}\n- Content:\n{content}\n\n"
+                "Respond in JSON:\n{\n  \"classification\": \"TRANSITORY\" | \"DESTROY\" | \"ARCHIVE\" | \"KEEP\",\n  \"confidence\": 0-1,\n  \"rationale\": \"<short explanation citing specifics>\"\n}"
+            )
+
+            logger.debug("LLM prompt: %s", prompt)
+
             llm_result = self.llm_engine.classify_with_llm(
                 model=model,
-                system_instructions=instructions,
+                system_instructions=prompt,
                 content=content,
-                temperature=temperature
+                temperature=temperature,
             )
             
             # Apply hybrid confidence scoring
