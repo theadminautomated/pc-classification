@@ -1,9 +1,12 @@
-"""
-core.llm_engine - LLM engine logic for Records Classifier
-"""
+"""core.llm_engine - LLM engine logic for Records Classifier"""
+
+import os
+
+# Force Ollama to run in CPU mode if possible. This avoids failures on machines
+# without compatible GPUs. The variable is ignored if already set by the user.
+os.environ.setdefault("OLLAMA_LLAMA_ACCELERATE", "false")
 
 import ollama
-import os
 import sys
 import time
 import datetime
