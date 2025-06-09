@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/terminal-core", "crates/llm-client", "crates/plugin-sdk"]
+resolver = "2"
