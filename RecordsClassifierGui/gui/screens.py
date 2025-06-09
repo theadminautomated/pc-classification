@@ -897,7 +897,7 @@ class MainScreen(ctk.CTkFrame):
     def _update_action_buttons_visibility(self):
         """Show RERUN and EXPORT only if not processing and table has items."""
         has_items = len(self.tree.get_children()) > 0
-        if not self.processing and has_items:
+        if self.classification_complete and not self.processing and has_items:
             self.rerun_btn.grid()
             self.export_btn.grid()
         else:
@@ -944,19 +944,19 @@ class MainScreen(ctk.CTkFrame):
                 print(f"DEBUG: Updated progress text: {self._sim_items_processed} files processed")
                 
                 # Update footer statistics based on processing status
-                status = file_result.get('Status')
-                if status == 'success':
-                    self.success_count += 1
-                    self.success_var.set(str(self.success_count))
-                    print(f"DEBUG: Success count updated to: {self.success_count}")
-                elif status == 'skipped':
+                status = (file_result.get('Status') or '').lower()
+                if 'skip' in status:
                     self.skipped_count += 1
                     self.skipped_var.set(str(self.skipped_count))
                     print(f"DEBUG: Skipped count updated to: {self.skipped_count}")
-                else:
+                elif 'error' in status:
                     self.error_count += 1
                     self.error_var.set(str(self.error_count))
                     print(f"DEBUG: Error count updated to: {self.error_count}")
+                else:
+                    self.success_count += 1
+                    self.success_var.set(str(self.success_count))
+                    print(f"DEBUG: Success count updated to: {self.success_count}")
                 
                 # Force UI refresh to show changes immediately
                 self.update_idletasks()
@@ -997,7 +997,8 @@ class MainScreen(ctk.CTkFrame):
                     'ModelDetermination': 'DESTROY',
                     'ConfidenceScore': 100,
                     'ContextualInsights': 'Older than 6 years - automatic destroy',
-                    'ProcessingTimeMs': 0
+                    'ProcessingTimeMs': 0,
+                    'Status': 'Marked for Destruction'
                 }
 
             # Run the blocking file processing in a thread pool
@@ -1066,7 +1067,8 @@ object adhering to the defined schema.
                     'ModelDetermination': classification_result.model_determination,
                     'ConfidenceScore': classification_result.confidence_score,
                     'ContextualInsights': classification_result.contextual_insights,
-                    'ProcessingTimeMs': classification_result.processing_time_ms
+                    'ProcessingTimeMs': classification_result.processing_time_ms,
+                    'Status': classification_result.status
                 }
                 
                 print(f"DEBUG: Final file_result: {file_result}")
@@ -1085,7 +1087,8 @@ object adhering to the defined schema.
                 'ModelDetermination': 'Error',
                 'ConfidenceScore': 0,
                 'ContextualInsights': f'Error: {str(e)}',
-                'ProcessingTimeMs': 0
+                'ProcessingTimeMs': 0,
+                'Status': 'error'
             }
 
     def _stop_classification(self):
@@ -1466,6 +1469,7 @@ object adhering to the defined schema.
             if self.processing:  # Only update if not stopped
                 self.processing = False
                 def update_complete_status():
+                    self.classification_complete = True
                     self.run_button.configure(state="normal", text="Start Classification")
                     self.status_text.configure(text=f"Classification complete: {processed_count} files processed")
                     self._update_action_buttons_visibility()
@@ -1475,6 +1479,7 @@ object adhering to the defined schema.
         except asyncio.CancelledError:
             def update_cancelled_status():
                 self.processing = False
+                self.classification_complete = True
                 self.run_button.configure(state="normal", text="Start Classification")
                 self.status_text.configure(text=f"Classification cancelled: {processed_count} files processed")
                 self._update_action_buttons_visibility()
@@ -1483,6 +1488,7 @@ object adhering to the defined schema.
         except Exception as e:
             def update_error_status():
                 self.processing = False
+                self.classification_complete = True
                 self.run_button.configure(state="normal", text="Start Classification")
                 self.status_text.configure(text=f"Classification error: {str(e)}")
                 self._update_action_buttons_visibility()
@@ -1570,7 +1576,9 @@ object adhering to the defined schema.
             self.skipped_var.set('0')
             self.error_var.set('0')
             self._sim_items_processed = 0
-            
+
+            self.classification_complete = False
+
             self._update_action_buttons_visibility()
 
             # Create and start the classification task
@@ -1642,7 +1650,9 @@ object adhering to the defined schema.
             self.skipped_var.set('0')
             self.error_var.set('0')
             self._sim_items_processed = 0
-            
+
+            self.classification_complete = False
+
             self._update_action_buttons_visibility()
 
             # Create and start the classification task
