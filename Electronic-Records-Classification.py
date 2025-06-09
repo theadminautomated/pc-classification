@@ -19,11 +19,16 @@ import concurrent.futures
 import multiprocessing
 from pathlib import Path
 from typing import Dict, Any, List, Set, Optional
+import logging
+import requests
+from config import CONFIG
 
 try:
     import ollama
 except ImportError:
     ollama = None
+
+logger = logging.getLogger(__name__)
 
 INCLUDE_EXT: Set[str] = frozenset({
     '.txt', '.csv', '.docx', '.xlsx', '.pptx', '.pdf', '.html', '.htm', '.md',
@@ -58,6 +63,34 @@ def hybrid_confidence(llm_score: int, file_path: Path, content: str, determinati
     except Exception:
         return min(100, max(1, int(llm_score)))
 
+def _generate(model: str, prompt: str, system_instructions: str, options: Dict[str, Any]) -> Dict[str, Any]:
+    """Call Ollama's /api/generate endpoint with proper settings."""
+    url = f"{CONFIG.ollama_url.rstrip('/')}/api/generate"
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "system": system_instructions or "",
+        "options": options,
+        "stream": False,
+    }
+    logger.debug("Sending prompt to LLM:\n%s", prompt)
+    try:
+        resp = requests.post(
+            url,
+            json=payload,
+            timeout=60,
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        logger.debug("LLM response:\n%s", resp.text)
+        return resp.json()
+    except requests.exceptions.Timeout:
+        logger.error("LLM request timed out.")
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error("LLM request failed: %s", str(e))
+        raise
+
 def classify_with_ollama(
     model: str,
     system_instructions: str,
@@ -87,17 +120,10 @@ def classify_with_ollama(
     prompt = f"Classify this content per instructions:\n{content[:5000]}\nOutput JSON only:"
 
     try:
-        response = ollama.chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_instructions or ""},
-                {"role": "user", "content": prompt}
-            ],
-            options=GENERATION_CONFIG,
-            stream=False
-        )
-
-        raw = response.get('message', {}).get('content', '') if isinstance(response, dict) else str(response)
+        response = _generate(model, prompt, system_instructions, GENERATION_CONFIG)
+        raw = response.get('response', '')
+        if not raw:
+            raw = response.get('message', {}).get('content', '') if isinstance(response, dict) else str(response)
         json_match = re.search(r'\{[^{}]*\}', raw, re.DOTALL)
         if not json_match:
             raise ValueError(f'No valid JSON found in: {raw[:200]}')
