@@ -731,11 +731,12 @@ class MainScreen(ctk.CTkFrame):
         self.lines_slider.configure(command=self._update_lines_label)
 
         # Slider for filtering by last modified date (years)
-        ctk.CTkLabel(
+        self.modified_text_label = ctk.CTkLabel(
             button_frame,
             text="Modified Range (Years):",
             font=(FONT_FAMILY, 11)
-        ).pack(side="left", padx=(20, 5), anchor="center")
+        )
+        self.modified_text_label.pack(side="left", padx=(20, 5), anchor="center")
 
         self.modified_slider = ctk.CTkSlider(
             button_frame,
@@ -756,6 +757,7 @@ class MainScreen(ctk.CTkFrame):
         self.modified_slider.configure(command=self._update_modified_label)
 
         # Hide modified range controls by default
+        self.modified_text_label.pack_forget()
         self.modified_slider.pack_forget()
         self.modified_label.pack_forget()
         
@@ -789,9 +791,11 @@ class MainScreen(ctk.CTkFrame):
     def _update_mode_ui(self, choice):
         """Show or hide modified range controls based on mode."""
         if choice == "Last Modified":
+            self.modified_text_label.pack(side="left", padx=(20, 5), anchor="center")
             self.modified_slider.pack(side="left", padx=(0, 10), anchor="center")
             self.modified_label.pack(side="left", anchor="center")
         else:
+            self.modified_text_label.pack_forget()
             self.modified_slider.pack_forget()
             self.modified_label.pack_forget()
         
