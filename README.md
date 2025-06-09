@@ -11,7 +11,7 @@ The Records Classifier sorts documents into **Keep**, **Destroy**, or **Transito
 - Give IT admins simple ways to update models and dependencies
 
 ## Main Features
-1. Modern Streamlit web interface
+1. Modern CustomTkinter desktop interface
 2. Local classification engine with lightweight heuristics
 3. Works with PDF, Office, images, and text files
 4. Export results to CSV
@@ -36,8 +36,7 @@ The Records Classifier sorts documents into **Keep**, **Destroy**, or **Transito
 3. Optionally edit `config.yaml` to customize the model or Ollama URL
 4. Ensure Tesseract and (on Windows) antiword are on your `PATH`
 5. Run `Deploy.ps1` once to load the model
-6. Start the UI with `streamlit run streamlit_app.py`
-   (edit `.streamlit/config.toml` to customize the theme)
+6. Start the GUI with `python run_app.py`
 
 ## Minimal Path to Awesome (Users)
 1. Open the app
@@ -70,7 +69,7 @@ The Records Classifier sorts documents into **Keep**, **Destroy**, or **Transito
 - Ensure Tesseract and antiword executables are included on target machines
 
 ## UI Modernization
-Screenshots of the classic interface and the new Streamlit UI are in `docs/`.
+Screenshots of the interface are in `docs/`.
 Key improvements:
 - Responsive design works on tablets and desktops
 - Clear color contrast and keyboard shortcuts
