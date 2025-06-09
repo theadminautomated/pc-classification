@@ -2,10 +2,14 @@
 
 
 a = Analysis(
-    ['N:\\IT Ops\\Product_Support_Documentation\\M365 Administration\\Records\\RecordsClassifierGui\\app_gui.py'],
+    ['RecordsClassifierGui/gui/app_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('N:\\IT Ops\\Product_Support_Documentation\\M365 Administration\\Records\\RecordsClassifierGui', 'RecordsClassifierGui'), ('N:\\IT Ops\\Product_Support_Documentation\\M365 Administration\\Records\\pierce-county-records-classifier-phi2', 'pierce-county-records-classifier-phi2'), ('N:\\IT Ops\\Product_Support_Documentation\\M365 Administration\\Records\\installer', 'installer')],
+    datas=[
+        ('RecordsClassifierGui', 'RecordsClassifierGui'),
+        ('pierce-county-records-classifier-phi2', 'pierce-county-records-classifier-phi2'),
+        ('installer', 'installer'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +39,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['N:\\IT Ops\\Product_Support_Documentation\\M365 Administration\\Records\\RecordsClassifierGui\\app.ico'],
+    icon=['RecordsClassifierGui/app.ico'],
 )
