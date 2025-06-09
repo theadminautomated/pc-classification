@@ -6,6 +6,7 @@
 $scriptPath = $PSScriptRoot
 Set-Location -Path $scriptPath
 $env:PYTHONPATH = $scriptPath
+$env:OLLAMA_LLAMA_ACCELERATE = 'false'
 
 # Check if Python is installed
 if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
