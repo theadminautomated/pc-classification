@@ -1,0 +1,45 @@
+# requirements.txt for Pierce County Records Classifier GUI
+# All dependencies pinned to latest stable versions as of May 2025
+
+# Core GUI and theming
+customtkinter>=5.2.2
+Pillow>=10.3.0
+
+# Standard library modules (no install needed):
+# tkinter, importlib, sys, os, math, typing
+
+# If you use any LLM/model integration (Ollama, etc.), add here:
+# ollama (uncomment if used)
+ollama>=0.1.8
+
+# For CSV export, pandas is optional but recommended for robust handling
+pandas>=2.2.2
+
+# For testing (unit/integration)
+pytest>=8.2.1
+
+# HTTP requests for service checks and API communication
+requests>=2.31.0
+requests>=2.31.0
+
+# For human-readable time and size formatting
+humanize>=4.8.0
+
+# Document parsing dependencies
+python-docx>=0.8.11
+python-pptx>=0.6.21
+PyPDF2>=3.0.0
+pdfplumber>=0.8.1
+pytesseract>=0.3.10
+ codex/refactor-core-logic-functions
+pdf2image>=1.16.0
+
+# For robust validation
+jsonschema>=4.24.0
+
+
+pdf2image>=1.16.0
+
+# For robust validation
+jsonschema>=4.24.0
+ main

@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RecordsClassifierGui", "RecordsClassifierGui\RecordsClassifierGui.csproj", "{125C4CAE-AF14-7239-2D2D-9FB2E5FA2160}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{125C4CAE-AF14-7239-2D2D-9FB2E5FA2160}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{125C4CAE-AF14-7239-2D2D-9FB2E5FA2160}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{125C4CAE-AF14-7239-2D2D-9FB2E5FA2160}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{125C4CAE-AF14-7239-2D2D-9FB2E5FA2160}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {5BB87BEB-32D0-43D0-88A6-CFDBA081D6A9}
+	EndGlobalSection
+EndGlobal

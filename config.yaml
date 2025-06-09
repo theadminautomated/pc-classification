@@ -1,0 +1,2 @@
+model_name: pierce-county-records-classifier-phi2:latest
+ollama_url: http://localhost:11434

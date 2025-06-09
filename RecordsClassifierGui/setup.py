@@ -1,0 +1,29 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="RecordsClassifierGui",
+    version="1.0.0",
+    packages=find_packages(),    install_requires=[
+        "customtkinter>=5.2.2",
+        "Pillow>=10.3.0",
+        "pandas>=2.2.2",
+        "pytest>=8.2.1",
+        "ollama>=0.1.8",
+        # Document parsing dependencies
+        "python-docx>=0.8.11",
+        "python-pptx>=0.6.21",
+        "PyPDF2>=3.0.0",
+        "pdfplumber>=0.8.1",
+        "pytesseract>=0.3.10",
+        "pdf2image>=1.16.0",
+        "jsonschema>=4.24.0"
+ codex/refactor-core-logic-functions
+    ],
+
+    ],
+ main
+    include_package_data=True,
+    description="Pierce County Records Classifier GUI and backend modules.",
+    author="Pierce County IT",
+    python_requires=">=3.9",
+)
