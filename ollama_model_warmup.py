@@ -1,19 +1,9 @@
 import time
+from pathlib import Path
 import requests
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 MODEL_NAME = "pierce-county-records-classifier-phi2:latest"
-
-
-def check_model_loaded() -> bool:
-    """Return True if the model appears in /api/tags."""
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        tags = r.json()  # ['model1:latest', 'model2:latest', ...]
-        return any(MODEL_NAME in tag for tag in tags)
-    except Exception as exc:
-        print(f"[ERROR] Ollama tag check failed: {exc}")
-        return False
 
 
 def warm_up_model() -> bool:
@@ -25,9 +15,7 @@ def warm_up_model() -> bool:
             "stream": False,
         }
         print(f"[INFO] Warming up model: {MODEL_NAME}...")
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/generate", json=payload, timeout=60
-        )
+        resp = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=60)
         if "READY" in resp.text:
             print("[SUCCESS] Ollama model is warm and ready.")
             return True
@@ -38,14 +26,37 @@ def warm_up_model() -> bool:
         return False
 
 
-def ensure_model_ready(max_retries: int = 3, delay: int = 10) -> bool:
-    """Ensure the model is pulled and warmed before continuing."""
-    for attempt in range(max_retries):
-        print(
-            f"[INFO] Checking model load status (Attempt {attempt + 1}/{max_retries})..."
-        )
-        if check_model_loaded() and warm_up_model():
+def create_model() -> bool:
+    """Attempt to create the model from the local Modelfile."""
+    try:
+        modelfile = Path("Modelfile-phi2")
+        if not modelfile.exists():
+            print(f"[ERROR] Modelfile not found: {modelfile}")
+            return False
+        payload = {
+            "name": MODEL_NAME.split(":")[0],
+            "modelfile": modelfile.read_text(encoding="utf-8"),
+        }
+        print(f"[INFO] Creating model {MODEL_NAME}...")
+        resp = requests.post(f"{OLLAMA_URL}/api/create", json=payload, timeout=300)
+        if resp.status_code == 200:
+            print("[SUCCESS] Model created successfully.")
             return True
+        print(f"[ERROR] Model creation failed: {resp.text}")
+        return False
+    except Exception as exc:
+        print(f"[ERROR] Model creation exception: {exc}")
+        return False
+
+
+def ensure_model_ready(max_retries: int = 3, delay: int = 10) -> bool:
+    """Create (if needed) and warm the model before continuing."""
+    for attempt in range(max_retries):
+        print(f"[INFO] Warming model (attempt {attempt + 1}/{max_retries})...")
+        if warm_up_model():
+            return True
+        print("[INFO] Warm-up failed, attempting to create model...")
+        create_model()
         time.sleep(delay)
     print("[FAIL] Ollama model failed to load after retries.")
     return False
