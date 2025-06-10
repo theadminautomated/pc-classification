@@ -72,12 +72,22 @@ class LLMEngine:
         """Attempt to import and verify the Ollama service."""
         try:
             import ollama
+            from config import CONFIG
 
             # Test that the service is reachable
             _ = ollama.list()
             self.ollama = ollama
             self.ollama_available = True
             logger.info("Ollama service detected and available")
+
+            # Preload the model to avoid startup delays
+            model_name = getattr(CONFIG, "model_name", "pierce-county-records-classifier-phi2:latest")
+            try:
+                logger.info("Preloading model %s", model_name)
+                ollama.generate(model=model_name, prompt="prewarm", stream=False)
+            except Exception as pre_exc:
+                logger.warning("Model preloading failed: %s", pre_exc)
+
         except Exception as exc:  # pragma: no cover - service missing
             logger.warning("Ollama unavailable: %s", exc)
             self.ollama_available = False
@@ -114,6 +124,7 @@ class LLMEngine:
 
             def llm_call() -> None:
                 try:
+                    logger.debug("Calling Ollama with prompt: %s", prompt)
                     response = self.ollama.chat(
                         model=model,
                         messages=[{"role": "user", "content": prompt}],
@@ -253,23 +264,15 @@ class ClassificationEngine:
         except Exception:
             return min(100, max(1, int(llm_score)))
     
-    def _read_file_content(self, file_path: Path, max_lines: int = 100, min_words: int = 300) -> str:
-        """Read at least `min_words` words from file, up to `max_lines` lines."""
-        words: List[str] = []
+    def _read_file_content(self, file_path: Path, max_words: int = 500, min_words: int = 300) -> str:
+        """Read the entire file and return up to `max_words` words."""
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                for _ in range(max_lines):
-                    line = f.readline()
-                    if not line:
-                        break
-                    words.extend(line.split())
-                    if len(words) >= min_words:
-                        break
+                text = f.read()
+            words = text.split()
             if len(words) < min_words:
-                logger.warning(
-                    "Content under %d words for %s", min_words, file_path.name
-                )
-            return " ".join(words)
+                logger.warning("Content under %d words for %s", min_words, file_path.name)
+            return " ".join(words[:max_words])
         except Exception as e:
             logger.warning("Could not read file %s: %s", file_path, e)
             return ""
@@ -291,7 +294,7 @@ class ClassificationEngine:
             model: LLM model name
             instructions: System instructions for classification
             temperature: LLM temperature
-            max_lines: Maximum lines to read from file
+            max_lines: Deprecated. Context extraction now uses up to 500 words
             run_mode: Classification mode ('Classification' or 'Last Modified')
             
         Returns:
@@ -339,8 +342,8 @@ class ClassificationEngine:
                     processing_time_ms=int(processing_time)
                 )
             
-            # Read file content
-            content = self._read_file_content(file_path, max_lines, min_words=300)
+            # Read file content (full file, trimmed to 500 words)
+            content = self._read_file_content(file_path, max_words=500, min_words=300)
             
             threshold = datetime.datetime.now() - datetime.timedelta(days=6 * 365)
 
@@ -390,13 +393,17 @@ class ClassificationEngine:
             
             # Build prompt for the LLM per cleanup policy
             prompt = (
-                "You are classifying digital records for cleanup based on this policy:\n"
-                "- TRANSITORY: brainstorming, notes, drafts, task tracking, reference, contact info.\n"
-                "- DESTROY: not needed + past retention.\n"
-                "- ARCHIVE: not needed, still within retention.\n"
-                "- KEEP: active or critical business use.\n\n"
-                f"File info:\n- Name: {file_path.name}\n- Type: {extension}\n- Last Modified: {mtime.isoformat()}\n- Content:\n{content}\n\n"
-                "Respond in JSON:\n{\n  \"classification\": \"TRANSITORY\" | \"DESTROY\" | \"ARCHIVE\" | \"KEEP\",\n  \"confidence\": 0-1,\n  \"rationale\": \"<short explanation citing specifics>\"\n}"
+                "Classify based on content and lastModifiedDate:\n"
+                "- TRANSITORY: notes, drafts, brainstorming, tracking, reference.\n"
+                "- DESTROY: no longer needed, and past retention.\n"
+                "- ARCHIVE: no longer needed, still within retention.\n"
+                "- KEEP: still in business use.\n\n"
+                f"File: {file_path.name}\n"
+                f"Type: {extension}\n"
+                f"Modified: {mtime.isoformat()}\n"
+                "Content:\n"
+                f"{content}\n\n"
+                "Respond:\n{\n  \"classification\": \"...\",\n  \"confidence\": 0-1,\n  \"rationale\": \"...\"\n}"
             )
 
             logger.debug("LLM prompt: %s", prompt)

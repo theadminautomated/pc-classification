@@ -705,30 +705,6 @@ class MainScreen(ctk.CTkFrame):
         )
         self.run_button.pack(side="left", padx=(0, 10), anchor="center")
         
-        # Lines-per-file slider for controlling the amount of text analyzed
-        ctk.CTkLabel(
-            button_frame,
-            text="Lines Per File:",
-            font=(FONT_FAMILY, 11)
-        ).pack(side="left", padx=(20, 5), anchor="center")
-
-        self.lines_slider = ctk.CTkSlider(
-            button_frame,
-            from_=10,
-            to=500,
-            number_of_steps=490,
-            width=120
-        )
-        self.lines_slider.set(100)
-        self.lines_slider.pack(side="left", padx=(0, 10), anchor="center")
-
-        self.lines_label = ctk.CTkLabel(
-            button_frame,
-            text=f"{int(self.lines_slider.get())}",
-            font=(FONT_FAMILY, 11)
-        )
-        self.lines_label.pack(side="left", anchor="center")
-        self.lines_slider.configure(command=self._update_lines_label)
 
         # Slider for filtering by last modified date (years)
         self.modified_text_label = ctk.CTkLabel(
@@ -775,14 +751,6 @@ class MainScreen(ctk.CTkFrame):
 
         # Initialize visibility based on default mode
         self._update_mode_ui(self.mode_var.get())
-
-    def _update_lines_label(self, value):
-        """Update the lines-per-file label when slider value changes.
-
-        Args:
-            value: New slider value
-        """
-        self.lines_label.configure(text=f"{int(float(value))}")
 
     def _update_modified_label(self, value):
         """Update the modified-years label when slider changes."""
@@ -1009,7 +977,7 @@ class MainScreen(ctk.CTkFrame):
 specializing in government content for Pierce County. Your primary function is to generate a single, precise JSON 
 object adhering to the defined schema.
 
-**Output Format:** Produce *only* this JSON object. Do not exceed 100 lines.
+**Output Format:** Produce *only* this JSON object.
 ```json
 {{
   "modelDetermination": "TRANSITORY" | "DESTROY" | "KEEP",
@@ -1034,7 +1002,7 @@ object adhering to the defined schema.
 
 **Instructions:**
 
-*   Read the first 100 lines of the input file.
+*   Analyze up to 500 words from the input file.
 *   Identify the most relevant legal classification (e.g., 'KEEP', 'DESTROY', 'TRANSITORY').
 *   Assign a confidence score (1-100) justifying your determination.
 *   Quote *exactly* one relevant text snippet to support your classification.
@@ -1051,7 +1019,7 @@ object adhering to the defined schema.
                     self.model,      # model
                     instructions,    # instructions
                     0.1,            # temperature (default from CLI version)
-                    int(self.lines_slider.get()),  # max_lines from slider
+                    0,              # deprecated max_lines parameter
                     self._run_mode  # run mode
                 )
                 

@@ -8,6 +8,8 @@ No dummy/test/stub code—this is the real deal.
 import logging
 import sys
 from pathlib import Path
+import requests
+from config import CONFIG
 
 def main():
     """Main entry point for the Records Classifier GUI app."""
@@ -22,6 +24,18 @@ def main():
     package_dir = script_dir / "RecordsClassifierGui"
     if str(package_dir) not in sys.path:
         sys.path.insert(0, str(package_dir))
+
+    # Preload the model to avoid timeouts on first request
+    try:
+        url = f"{CONFIG.ollama_url}/api/generate"
+        requests.post(
+            url,
+            json={"model": CONFIG.model_name, "prompt": "warmup", "stream": False},
+            timeout=10,
+        )
+        logger.info("Preloaded model %s", CONFIG.model_name)
+    except Exception as exc:
+        logger.warning("Model preloading failed: %s", exc)
 
     try:
         from RecordsClassifierGui.gui.app import RecordsClassifierApp
