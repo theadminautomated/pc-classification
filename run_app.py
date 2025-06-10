@@ -8,32 +8,9 @@ No dummy/test/stub code—this is the real deal.
 import logging
 import sys
 from pathlib import Path
-import subprocess
-try:
-    import requests  # type: ignore
-except Exception:  # pragma: no cover - fallback for minimal environments
-    import json as _json
-    from urllib import request as _urlreq
 
-    class _Resp:
-        def __init__(self, text: str):
-            self.text = text
-
-        def json(self):
-            return _json.loads(self.text)
-
-        def raise_for_status(self):
-            pass
-
-    class requests:  # type: ignore
-        @staticmethod
-        def post(url, json=None, headers=None, timeout=10):
-            data = _json.dumps(json or {}).encode()
-            req = _urlreq.Request(url, data=data, headers=headers or {}, method="POST")
-            with _urlreq.urlopen(req, timeout=timeout) as resp:
-                text = resp.read().decode()
-            return _Resp(text)
 from config import CONFIG
+from ollama_model_warmup import ensure_model_ready
 
 def main():
     """Main entry point for the Records Classifier GUI app."""
@@ -49,22 +26,10 @@ def main():
     if str(package_dir) not in sys.path:
         sys.path.insert(0, str(package_dir))
 
-    # Preload the model to avoid timeouts on first request
-    try:
-        subprocess.run([
-            "ollama",
-            "run",
-            "pierce-county-records-classifier-phi2",
-        ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        url = f"{CONFIG.ollama_url}/api/generate"
-        requests.post(
-            url,
-            json={"model": CONFIG.model_name, "prompt": "warmup", "stream": False},
-            timeout=10,
-        )
-        logger.info("Preloaded model %s", CONFIG.model_name)
-    except Exception as exc:
-        logger.warning("Model preloading failed: %s", exc)
+    # Ensure the Ollama model is loaded and ready before launching the GUI
+    if not ensure_model_ready():
+        logger.error("Model is not ready. Exiting.")
+        sys.exit(1)
 
     try:
         from RecordsClassifierGui.gui.app import RecordsClassifierApp
