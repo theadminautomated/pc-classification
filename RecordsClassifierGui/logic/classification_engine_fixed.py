@@ -34,12 +34,18 @@ except Exception:  # pragma: no cover - fallback for minimal environments
             pass
 
     class requests:  # type: ignore
+        class RequestException(Exception):
+            pass
+
         @staticmethod
         def post(url, json=None, headers=None, timeout=10):
             data = _json.dumps(json or {}).encode()
             req = _urlreq.Request(url, data=data, headers=headers or {}, method="POST")
-            with _urlreq.urlopen(req, timeout=timeout) as resp:
-                text = resp.read().decode()
+            try:
+                with _urlreq.urlopen(req, timeout=timeout) as resp:
+                    text = resp.read().decode()
+            except Exception as exc:
+                raise requests.RequestException(str(exc)) from exc
             return _Resp(text)
 
 from RecordsClassifierGui.core import model_output_validation
@@ -121,25 +127,27 @@ class LLMEngine:
 
         logger.debug("LLM prompt: %s", system_instructions)
 
-        if not self.ollama_available:
-            logger.warning("LLM unavailable; falling back to heuristic mode")
-            return self._heuristic_classify(content)
-
+        used_fallback = False
         prompt = system_instructions
 
         try:
             from config import CONFIG
             url = f"{CONFIG.ollama_url.rstrip('/')}/api/generate"
 
-            logger.debug("Sending prompt to LLM: %s", prompt)
+            payload = {"model": model, "prompt": prompt, "stream": False}
+            logger.debug("POST %s payload=%s", url, payload)
+
             resp = requests.post(
                 url,
-                json={"model": model, "prompt": prompt, "stream": False},
+                json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=self.timeout_seconds,
+                timeout=15,
             )
 
-            resp.raise_for_status()
+            if not resp.ok:
+                logger.error("LLM HTTP %s: %s", resp.status_code, resp.text)
+                resp.raise_for_status()
+
             raw = resp.json().get("response", resp.text)
             logger.debug("LLM raw response: %s", raw)
 
@@ -160,15 +168,26 @@ class LLMEngine:
             if not isinstance(rationale, str) or not rationale.strip():
                 raise ValueError("Rationale missing")
 
-            return {
+            result_dict = {
                 "modelDetermination": result["classification"],
                 "confidenceScore": int(conf * 100),
                 "contextualInsights": rationale,
+                "used_fallback": used_fallback,
             }
+            logger.debug("Parsed LLM result: %s", result_dict)
+            return result_dict
 
+        except requests.RequestException as exc:
+            used_fallback = True
+            err_text = getattr(getattr(exc, "response", None), "text", str(exc))
+            logger.error("LLM request failed: %s", err_text)
         except Exception as exc:  # pragma: no cover - unexpected failures
+            used_fallback = True
             logger.error("LLM classification failed: %s", exc)
-            raise
+
+        fallback = self._heuristic_classify(content)
+        fallback["used_fallback"] = used_fallback
+        return fallback
 
     def _heuristic_classify(self, content: str) -> Dict[str, Any]:
         """Minimal heuristic fallback used when LLM cannot be reached."""
@@ -399,6 +418,7 @@ class ClassificationEngine:
                 content=content,
                 temperature=temperature,
             )
+            used_fallback = llm_result.pop("used_fallback", False)
             
             # Apply hybrid confidence scoring
             confidence_score = self._hybrid_confidence(
@@ -409,7 +429,7 @@ class ClassificationEngine:
             )
             
             processing_time = (datetime.datetime.now() - start_time).total_seconds() * 1000
-            
+
             return ClassificationResult(
                 file_name=file_path.name,
                 extension=file_path.suffix,
@@ -419,7 +439,7 @@ class ClassificationEngine:
                 model_determination=llm_result.get('modelDetermination', 'ERROR'),
                 confidence_score=confidence_score,
                 contextual_insights=llm_result.get('contextualInsights', ''),
-                status="success",
+                status="fallback" if used_fallback else "success",
                 processing_time_ms=int(processing_time)
             )
             
