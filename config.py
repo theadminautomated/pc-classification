@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 import logging
 import os
-import yaml
+import json
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +46,11 @@ def load_config() -> AppConfig:
     if CONFIG_PATH.exists():
         try:
             with CONFIG_PATH.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
+                text = f.read()
+                if yaml:
+                    data = yaml.safe_load(text) or {}
+                else:
+                    data = json.loads(text or "{}")
         except Exception as exc:
             logger.warning("Failed to load %s: %s", CONFIG_PATH, exc)
             data = {}
