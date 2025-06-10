@@ -8,9 +8,9 @@ MODEL_NAME = "pierce-county-records-classifier-phi2:latest"
 def check_model_loaded() -> bool:
     """Return True if the model appears in /api/tags."""
     try:
-        resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        tags = resp.json()
-        return any(MODEL_NAME in tag.get("name", "") for tag in tags)
+        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        tags = r.json()  # ['model1:latest', 'model2:latest', ...]
+        return any(MODEL_NAME in tag for tag in tags)
     except Exception as exc:
         print(f"[ERROR] Ollama tag check failed: {exc}")
         return False
