@@ -16,8 +16,33 @@ from pathlib import Path
 from typing import Dict, Any, List, Set, Optional, Union
 from dataclasses import dataclass
 import logging
-from RecordsClassifierGui.core import model_output_validation
 import os
+try:
+    import requests  # type: ignore
+except Exception:  # pragma: no cover - fallback for minimal environments
+    import json as _json
+    from urllib import request as _urlreq
+
+    class _Resp:
+        def __init__(self, text: str):
+            self.text = text
+
+        def json(self):
+            return _json.loads(self.text)
+
+        def raise_for_status(self):
+            pass
+
+    class requests:  # type: ignore
+        @staticmethod
+        def post(url, json=None, headers=None, timeout=10):
+            data = _json.dumps(json or {}).encode()
+            req = _urlreq.Request(url, data=data, headers=headers or {}, method="POST")
+            with _urlreq.urlopen(req, timeout=timeout) as resp:
+                text = resp.read().decode()
+            return _Resp(text)
+
+from RecordsClassifierGui.core import model_output_validation
 
 # Force CPU mode unless user overrides
 os.environ.setdefault("OLLAMA_LLAMA_ACCELERATE", "false")
@@ -55,43 +80,35 @@ class ClassificationResult:
     error_message: str = ""
 
 class LLMEngine:
-    """LLM interaction layer with robust fallback and logging."""
-    
+    """LLM interaction layer using Ollama's HTTP API."""
+
     def __init__(self, timeout_seconds: int = 60):
         """Initialize the LLM engine.
-        
+
         Args:
             timeout_seconds: Maximum time to wait for LLM responses.
         """
         self.timeout_seconds = timeout_seconds
         self.ollama_available = False
-        self.ollama = None
         self._initialize_ollama()
 
     def _initialize_ollama(self) -> None:
-        """Attempt to import and verify the Ollama service."""
+        """Verify that the Ollama service is reachable."""
+        from config import CONFIG
+        url = f"{CONFIG.ollama_url.rstrip('/')}/api/generate"
         try:
-            import ollama
-            from config import CONFIG
-
-            # Test that the service is reachable
-            _ = ollama.list()
-            self.ollama = ollama
+            resp = requests.post(
+                url,
+                json={"model": CONFIG.model_name, "prompt": "ping", "stream": False},
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+            resp.raise_for_status()
             self.ollama_available = True
             logger.info("Ollama service detected and available")
-
-            # Preload the model to avoid startup delays
-            model_name = getattr(CONFIG, "model_name", "pierce-county-records-classifier-phi2:latest")
-            try:
-                logger.info("Preloading model %s", model_name)
-                ollama.generate(model=model_name, prompt="prewarm", stream=False)
-            except Exception as pre_exc:
-                logger.warning("Model preloading failed: %s", pre_exc)
-
         except Exception as exc:  # pragma: no cover - service missing
             logger.warning("Ollama unavailable: %s", exc)
             self.ollama_available = False
-            self.ollama = None
 
     def classify_with_llm(
         self,
@@ -104,53 +121,26 @@ class LLMEngine:
 
         logger.debug("LLM prompt: %s", system_instructions)
 
-        if not self.ollama_available or not self.ollama:
+        if not self.ollama_available:
             logger.warning("LLM unavailable; falling back to heuristic mode")
             return self._heuristic_classify(content)
-
-        generation_config = {
-            "temperature": max(0.0, min(1.0, temperature)),
-            "top_p": 0.9,
-            "top_k": 40,
-            "num_ctx": 8192,
-            "repeat_penalty": 1.2,
-            "system": system_instructions,
-        }
 
         prompt = system_instructions
 
         try:
-            result_container = {"result": None, "error": None}
+            from config import CONFIG
+            url = f"{CONFIG.ollama_url.rstrip('/')}/api/generate"
 
-            def llm_call() -> None:
-                try:
-                    logger.debug("Calling Ollama with prompt: %s", prompt)
-                    response = self.ollama.chat(
-                        model=model,
-                        messages=[{"role": "user", "content": prompt}],
-                        options=generation_config,
-                        stream=False,
-                    )
-                    result_container["result"] = response
-                except Exception as exc:
-                    result_container["error"] = exc
-
-            thread = threading.Thread(target=llm_call, daemon=True)
-            thread.start()
-            thread.join(timeout=self.timeout_seconds)
-
-            if thread.is_alive():
-                raise TimeoutError(f"LLM call timed out after {self.timeout_seconds} seconds")
-
-            if result_container["error"]:
-                raise result_container["error"]
-
-            response = result_container["result"]
-            raw = (
-                response.get("message", {}).get("content", "")
-                if isinstance(response, dict)
-                else str(response)
+            logger.debug("Sending prompt to LLM: %s", prompt)
+            resp = requests.post(
+                url,
+                json={"model": model, "prompt": prompt, "stream": False},
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout_seconds,
             )
+
+            resp.raise_for_status()
+            raw = resp.json().get("response", resp.text)
             logger.debug("LLM raw response: %s", raw)
 
             json_match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
@@ -178,11 +168,7 @@ class LLMEngine:
 
         except Exception as exc:  # pragma: no cover - unexpected failures
             logger.error("LLM classification failed: %s", exc)
-            return {
-                "modelDetermination": "ERROR",
-                "confidenceScore": 0,
-                "contextualInsights": f"Classification error: {exc}",
-            }
+            raise
 
     def _heuristic_classify(self, content: str) -> Dict[str, Any]:
         """Minimal heuristic fallback used when LLM cannot be reached."""
@@ -264,15 +250,14 @@ class ClassificationEngine:
         except Exception:
             return min(100, max(1, int(llm_score)))
     
-    def _read_file_content(self, file_path: Path, max_words: int = 500, min_words: int = 300) -> str:
-        """Read the entire file and return up to `max_words` words."""
+    def _read_file_content(self, file_path: Path, min_words: int = 300) -> str:
+        """Read the entire file and return the text."""
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read()
-            words = text.split()
-            if len(words) < min_words:
+            if len(text.split()) < min_words:
                 logger.warning("Content under %d words for %s", min_words, file_path.name)
-            return " ".join(words[:max_words])
+            return text
         except Exception as e:
             logger.warning("Could not read file %s: %s", file_path, e)
             return ""
@@ -342,8 +327,8 @@ class ClassificationEngine:
                     processing_time_ms=int(processing_time)
                 )
             
-            # Read file content (full file, trimmed to 500 words)
-            content = self._read_file_content(file_path, max_words=500, min_words=300)
+            # Read full file content for classification
+            content = self._read_file_content(file_path, min_words=300)
             
             threshold = datetime.datetime.now() - datetime.timedelta(days=6 * 365)
 
@@ -393,17 +378,17 @@ class ClassificationEngine:
             
             # Build prompt for the LLM per cleanup policy
             prompt = (
-                "Classify based on content and lastModifiedDate:\n"
-                "- TRANSITORY: notes, drafts, brainstorming, tracking, reference.\n"
-                "- DESTROY: no longer needed, and past retention.\n"
-                "- ARCHIVE: no longer needed, still within retention.\n"
-                "- KEEP: still in business use.\n\n"
+                "You are classifying electronic records for cleanup based on these rules:\n\n"
+                "- TRANSITORY: notes, drafts, brainstorms, tasks, etc.\n"
+                "- DESTROY: no longer needed and past retention.\n"
+                "- ARCHIVE: no longer needed but still in retention.\n"
+                "- KEEP: active or business-critical.\n\n"
                 f"File: {file_path.name}\n"
                 f"Type: {extension}\n"
                 f"Modified: {mtime.isoformat()}\n"
                 "Content:\n"
                 f"{content}\n\n"
-                "Respond:\n{\n  \"classification\": \"...\",\n  \"confidence\": 0-1,\n  \"rationale\": \"...\"\n}"
+                "Respond in JSON:\n{\n  \"classification\": \"...\",\n  \"confidence\": 0-1,\n  \"rationale\": \"...\"\n}"
             )
 
             logger.debug("LLM prompt: %s", prompt)
