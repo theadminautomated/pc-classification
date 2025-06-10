@@ -15,7 +15,7 @@ The Records Classifier sorts documents into **Keep**, **Destroy**, or **Transito
 2. Local classification engine with lightweight heuristics
 3. Works with PDF, Office, images, and text files
 4. Export results to CSV
-5. Adjustable lines-per-file slider to control context size
+5. Automatically analyzes up to 500 words from each file
 6. Responsive layout with dark mode and keyboard navigation
 7. **Last Modified mode** to quickly find records older than six years
 
